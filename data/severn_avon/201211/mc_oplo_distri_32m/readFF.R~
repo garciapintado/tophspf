@@ -1,0 +1,66 @@
+##
+# script to set up run time parameter for Geoclaw-based flood forecast
+#
+#rm(ncols,nrows,dy,dx,ll,xseq,yseq,ryseq,zseq,rowbar,z,bb,prjCRS)
+#
+
+FF <- list()
+FF$path <- list()
+#FF$path$binmod    <- file.path(pathbase,'lisfloodrep')                       # path to model binary executable | odin.nerc-essc.ac.uk
+FF$path$data      <- dsndat                                                   # path to parent data folder
+FF$region         <- region                                                   # Initial lisflood files input to matlab and matlab results input to LISFLOOD will be stored in [FF.path.data '/' FF.region]
+FF$event          <- event
+FF$scn            <- scn
+# FF$path$hpcscript <- file.path(dsndat, region, event, scn, 'lisfloodArrR.sh') # pathed HPC script for ensemble execution job
+FF$demf           <- 'DEM.asc'                                                # located in the '.../region' folder. Filename of ArcGIS ASCII DTM file
+FF$overpassf      <- ''                                                       # located in the '.../region' folder. Contains a pre-saved Matlab struct ('OP') with remote-sensing flood extent sampled points
+FF$modexe         <- 'test_geoclaw'                                           # located in FF.path.binmod. Model executable  | odin.nerc-essc.ac.uk
+FF$dirroot        <- 'gcresults'                                              # relative path to Lisflood results, within .../scn
+FF$path$dirroot   <- file.path(dsndat, region, event, scn, FF$dirroot)        # absolute path to Lisflood simulation output
+FF$resroot        <- 'simple'                                                 # base naming of model input/output. Is is not required to match FF.region
+FF$starttimeStr   <- '2014-01-01 00:00:00 UTC'                                # start simulation time (when the model will be first launched). TODO: if it nos not included in all timeseries, has to be included by interpGau2Assi.m
+FF$endtimeStr     <- '2014-01-03 10:00:00 UTC'                                # end simulation time (when model stops)
+FF$m <- 1                                                                     # number of members in the ensemble
+FF$nproc <- 1                                                                 # number of processors [coworkers] for ensemble model execution in HPC  (normally ~30)
+FF$hpc   <- 'mac'                                                             # %in% ['c2a','cca','essc']
+FF$srt   <- 3600*5                                                            # [s] maximum time allowed for jobs to run. Members exceeding this runtime will be killed
+FF$assim <- list()
+FF$assim$gau <- list()
+FF$assim$gau$bool <- 0
+FF$assim$gau$twin <- 60*60
+FF$assim$gau$nobs <- 5
+FF$assim$op <- list()
+FF$assim$op$bool  <- 0
+FF$assim$op$qc    <- 'gstat'                                                  # QC of SAR-based WLOs: oulier analysis of the innovations [0: noQC, < 0: global z-scores, > 0: radius for moving window z-scores, 'gstat': geostatistically obtained window]
+FF$assim$qtrans     <- 1                                                      # if 1, error scaling in inflows Q'= [Q+1000]^(5/3) is done for the assimilation step
+FF$obs_variance_op  <- 0.25^2                                                 # observation variance for WL overpass points [m^2], i.e 0.25 m sdev
+FF$obs_variance_gau <- 0.10^2
+FF$update <- list()
+FF$update$h      <- list()
+FF$update$h$bool <- list()
+FF$update$bdy <- list()                                                       # boundary conditions
+FF$update$bdy$bool <- 1
+FF$update$fpfr <- list()                                                      # floodplain friction
+FF$update$fpfr$bool    <- 1
+FF$update$fpfr$infac   <- 1                                                   # in [0,1] 0 : preserve variance previous to updating. 1 : no inflation
+FF$update$fpfr$minval  <- 0.050
+FF$update$SGCfr <- list()                                                     # channel friction
+FF$update$SGCfr$bool   <- 1                                                   # LF$nparchar vector length
+FF$update$SGCfr$infac  <- 1                                                   # not NA to keep a minimum constant variance
+FF$update$SGCfr$minval <- 0.025
+FF$update$dwsl <- list()
+FF$update$dwsl$bool    <- 1
+FF$update$dwsl$infac   <- 0.0                                                 # 0: preserves variance along assimilation steps
+FF$update$dwsl$minval  <- 3.0E-05
+FF$update$dwsl$pos     <- c(384537.5, 227887.5)                               # Haw Bridge | geographical position for filter localisation
+FF$update$bed <- list()
+FF$update$bed$bool    <- 1
+FF$update$bed$cv      <- 0.15
+FF$update$bed$infac   <- 1                                                    # in [0,1] 0 : preserve variance previous to updating. 1 : no inflation
+FF$update$bed$stderf  <- 'bath75err.rds'
+FF$qinfR    <- 'qsim.Rsav'
+FF$hobfR    <- 'gaugeEA.Rsav'
+FF$gaugesfR <- 'gauges.txt'
+
+# return(FF)
+#}

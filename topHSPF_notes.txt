@@ -1,0 +1,52 @@
+Notes about distributing the HSPF PWATER module.
+
+In order to make the overland flow in the model fully distributed, the
+surface detention storage (SURS) must be updated every HSPF internal time step
+according to a surface distributed runoff model (e.g., a kinematic wave). The function to do so
+will not update SURLI (external lateral surface inflow), as this is
+allocated for additional external input. Instead, SURS must be updated
+without any external inflow (or with SURI?), and just the surface outflow from the
+catchment outlet must be considered for the total output, as surface
+outflow (SURO). This approach does does not consider an explicit
+channel routing.
+
+Thus the distributed interception overflow (CEPO) from interception
+storage (CEPS) is added to the optionally supplied time series of
+surface external lateral inflow (SURLI) to produce the total distributed
+surface inflow (SURI) that goes into the surface detention storage
+(SURS).
+
+Inflow (SURI) into the surface detention storage is added to the
+existing storage (SURS) to make up the water available for
+infiltration and runoff, that is the moisture available to the land
+surface (MSUPY).
+
+The water holding capacity of the two soil storages, upper zone and
+lower zone, in module section PERLND is defined in terms of nominal
+capacities. Nominal, rather than absolute capacities, serve the
+purpose of smoothing any abrupt change that would occur if an absolute
+capacity is reached. Such capacities permit a smooth transition in
+hydrologic performance as the water content fluctuates.
+
+Regarding assimilation of SSM, the subroutine 'uzinf2' partitions
+the transfer of soil moisture along the profile. The key
+parameters for infiltration to evaluate are 'infilt', 'infexp', and
+'uzsn'.
+
+time management in HspfPwater:
+
+INPUT    inct    : input and oputer time step (e.g. hourly)
+INPUT    deltat  : computing inner  time step
+INPUT    nsteps  : number of computing outer time steps
+CALC     stepdiv = inct/deltat 
+CALC     innsteps: number of inner time steps
+CALC     delta60 = deltat / 3600.00, internal time step in hours
+
+e.g. input is hourly, (inct=3600), and computing is done in 15' loops
+(deltat=900). Then if nsteps=10 (i.e. 10 hours of total simulation),
+stepdiv=4.0, and innsteps=nsteps*4 = 40 (10 hours of total
+simulation).
+A call to an external module modifying a state variable (e.g. a
+distributed overland routing, which would modify SURS), would be
+called every internal timestep
+

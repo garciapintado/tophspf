@@ -1,0 +1,4 @@
+OUTWATCH outwatch.dat
+FOOFILE  whatever.dat
+DT_LOG   dt.log
+

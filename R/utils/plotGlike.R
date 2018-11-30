@@ -1,0 +1,69 @@
+plotGlike <- function(parM, glike, stats='E', MCflags, kpar=NULL, dsnplt, color='navyblue') {
+ # +++ purpose +++
+ # plot scatterplots of performance statistics
+ #
+ # parM :: list of list/matrices, i=1..n. 
+ # glike  :: list.   [length(glike)<=nhrus], where dim(glike[[iw]]) == [nstats x m]
+ # kpar   :: 2-element list [SGC,dsl] for kinematic wave SGC parameters [just friction and slope considered here]
+
+ # Details: parM can contain lists of matrices. Each list element contains itself matrices.
+ #          Thus for several observation series for which an informal likelihood measurement is given,
+ #          List elements contain as many matrices as observation series.
+  
+ dsnplt <- file.path(dsnplt,'glike')
+ if (!file.exists(dsnplt))
+   dir.create(dsnplt, recursive=TRUE)
+
+ npars  <- sapply(parM,function(x){ifelse(is.matrix(x),nrow(x),nrow(x[[1]]))}) # vector: parameters/parM[[i]]
+
+ if (stats=='all')
+  stats <- rownames(glike[[1]])[-1]
+  
+ 
+ #m     <- ncol(parM[[1]])
+ 
+ # plot on PDF of statistics / HRU. For each PDF, one row of plots / statistics & one column of plots / parameter
+ # Note: this has to be made HRU's specific parameters when these are in use
+ nrows <- length(stats)
+ ncols <- sum(npars)
+ paper.width  <- 7.5*ncols      # cm
+ paper.height <- 6.0*nrows      # cm
+ mat <- matrix(1:(nrows*ncols), nrow=nrows, ncol=ncols, byrow=TRUE)
+
+
+ 
+ for (io in 1:length(glike)) {                        # 1 plot file per observation time series
+   if (is.null(glike[[io]]))
+     next
+   # set plot parameters
+   fname <- paste(names(glike)[io],'pdf',sep='.')
+   pdf(file=file.path(dsnplt,fname), width=paper.width/2.54+0.1, height=paper.height/2.54+0.1)
+   layout(mat=mat,widths=lcm(rep(paper.width/ncols,ncols)), heights=lcm(rep(paper.height/nrows,nrows)), respect=TRUE)
+   par.default <- par(no.readonly = TRUE)
+   par(cex=0.6)
+   par(mgp=c(2.3,1,0))  # para regular la distancia (2.5) de los titulos de ejes a la figura
+   par(mai=c(1.1,1.5,0.6,0.1)/2.54)
+
+   for (ir in 1:length(stats)) {                      # cycle through performance statistics
+   #cat('ir:',ir,'\n')
+     for (ip in 1:length(npars)) {                    # cycle through parameters
+       #cat('ip:',ip,'\n')
+       if (is.list(parM[[ip]])) {                     # get corresponding
+           x <- parM[[ip]][[io]]                               
+       } else {
+           x <- parM[[ip]]
+       }
+       for (jp in 1:npars[ip]) {
+       #  cat('jp:',jp,'\n')
+         xlim <- range(x[jp,])
+         if (any(is.na(xlim)))
+           xlim <- c(0,1)
+         plot(x[jp,], glike[[io]][stats[ir],],col=color,
+              xlab=paste(names(parM)[ip],'::', rownames(x)[jp],sep=''),
+              ylab=stats[ir], font.lab=2, xlim=xlim)
+       }
+     }
+   }
+   dev.off()
+ } # end for io
+} 

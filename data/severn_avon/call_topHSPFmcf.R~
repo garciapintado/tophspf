@@ -1,0 +1,76 @@
+# call to topHSPFmcf
+#
+# This is a launcher to conduct a forward MC analysis for calibrating the topHSPF model at the Severn-Avon
+#
+# this may be execute non-interactively from the parent tophspf folder as:
+# R CMD BATCH --no-save --no-restore-data --no-readline $HOME/docs/hydrology/tophspf/
+# data/severn_avon/call_topHSPFmcf.R &
+
+ startT <- Sys.time()
+
+ HOME <- Sys.getenv('HOME')
+ PERM <- Sys.getenv('NCEO')
+ CLAW <- Sys.getenv('CLAW')
+
+ #HSPF <- Sys.getenv("HSPF")
+ HSPF <- file.path(HOME,'docs','hydrology','tophspf')          # source data & code files
+
+ dsn    <- file.path(HSPF,'data')
+ dsndat <- file.path(PERM,'tophspf','data')             # PERMANENT [non-backed-up]
+ region <- 'severn_avon'
+ event  <- '201211'
+ #scn    <- 'mc_oplo_lumped_32m'
+ #scn    <- 'mc_oplo_distri_32m'
+ #scn <- 'mc_c200707_l32m'
+ scn <- 'mc_o201211_d_0150m'                            # 201211 event open loop distributed
+
+ dsnqhob <- file.path(HOME,'docs','DEMON','data','flow_stage',event,'flow_level')
+ qhobf   <- 'gaugeEA.Rsav'
+
+ source(file.path(HOME, 'docs','DEMON','DA','R', 'stats','perfstatf.R'))
+ source(file.path(HOME, 'docs','DEMON','DA','R', 'utils','acc2ins.R'))
+ source(file.path(HOME, 'docs','DEMON','DA','R', 'utils','genSGCgrpar.R'))
+ source(file.path(HOME, 'docs','DEMON','DA','R', 'utils','irts2matlab.R'))
+ source(file.path(HSPF, 'R', 'topHSPFmcf.R'))
+ source(file.path(HSPF, 'R', 'readTStopHSPF.R'))
+ source(file.path(HSPF, 'R', 'writeTopHSPF.R'))
+ source(file.path(HSPF, 'R', 'writeStaticTopHSPF.R'))
+ source(file.path(HSPF, 'R', 'hpc',   'macRunTHjob.R'))
+ source(file.path(HSPF, 'R', 'hpc',   'makehpcScript.R'))
+ source(file.path(HSPF, 'R', 'hpc',   'rocksRunTHjob.R'))
+ source(file.path(HSPF, 'R', 'utils', 'plotGlike.R'))
+ source(file.path(HSPF, 'R', 'utils', 'selectPriorMC.R'))
+ source(file.path(HSPF, 'R', 'utils', 'topHSPFplotTS.R'))
+ source(file.path(HSPF, 'R', 'utils', 'topHSPFplotTSrunoff.R'))
+ source(file.path(HSPF, 'R', 'utils', 'ts2DA.R'))
+ source(file.path(HSPF, 'R', 'utils', 'writeGmeta.R'))
+
+ dsnscn <- file.path(dsn,    region, event, scn)         # source data in backed-up volume
+ dsnsim <- file.path(dsndat, region, event, scn)         # simulation data in non-backed-up volume
+
+ # create input and output folders
+ if (file.exists(dsnsim)) {
+   system(paste("rm -r -f",dsnsim))
+ }
+ dir.create(dsnsim, recursive=TRUE)
+ dir.create(file.path(dsnsim,'input'))
+ dir.create(file.path(dsnsim,'output'))
+
+ # link header / files
+ system(paste("ln -sf", file.path(dsn,region,'header_geometa.R'),     dsnscn))
+ system(paste("ln -sf", file.path(dsn,region,event,'header_event.R'), dsnscn))
+ system(paste("ln -sf", file.path(dsn,region, 'watmaps','*'),         dsnscn))
+ system(paste("ln -sf", file.path(dsnqhob,'R',qhobf),                 dsnscn))   # observations file [flow & level time series]
+ #system(paste("ln -s", file.path(dsnscn,'low_sevn_sub.stage'),       dsnscn))
+
+ err <- topHSPFmcf(dsn, dsndat, region, event, scn)
+ cat('error:',err,'\n')
+
+if (1 > 2) {
+  cwd <- getwd()
+  setwd(dsnsim)
+  load('MCres.Rsav')
+  load('MCglopar.Rsav')
+  load('glike.Rsav')
+  setwd(cwd)
+}

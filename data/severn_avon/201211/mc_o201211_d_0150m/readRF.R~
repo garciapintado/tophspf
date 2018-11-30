@@ -1,0 +1,68 @@
+# Severn-Teme-Avon watershed
+# run-off forecast ensemble parameters
+RF <- list()
+RF$m      <- 150                         # ensemble size
+RF$hpc    <- 'essc'                      # %in% ['c2a','cca','essc','mac']
+RF$npc    <-  15                         # number of processors [coworkers] for parallel computing
+RF$modexe <- 'hspf90_geoclaw'
+
+#FF$dirroot        <- 'gcresults'                                              # relative path to Lisflood results, within .../scn
+#FF$path$dirroot   <- file.path(dsndat, region, event, scn, FF$dirroot)        # absolute path to Lisflood simulation output
+#FF$resroot        <- 'simple'                                                 # base naming of model input/output. Is is not required to match FF.region
+#FF$srt   <- 3600*5                                                            # [s] maximum time allowed for jobs to run. Members exceeding this runtime will be killed
+#FF$obs_variance_op  <- 0.25^2                                                 # observation variance for WL overpass points [m^2], i.e 0.25 m sdev
+#FF$obs_variance_gau <- 0.10^2
+
+RF$path <- list()
+RF$path$hpcscript <- file.path(dsnsim,'input','RocksCluster_topHSPF.sh')
+RF$path$data <- dsndat
+RF$region    <- region
+RF$event     <- event
+RF$scn       <- scn
+
+RF$mcmode         <- 1                # 1 for MonteCarlo simulation | 0 for parameter inheritance
+RF$mo             <- RF$m             # for pre-calibrated models (mcmode==0) this has to NULL
+RF$inh            <- list()           # non-empty list for mcmode == 0
+RF$inh$prior      <- file.path(PERM,'tophspf/data/severn_avon/200707/mc_oplo_500m') # previous simulation just used if RF$mcmode = 0
+RF$inh$stat       <- 'E'
+RF$inh$decreasing <- TRUE
+
+RF$simspdist <- 'spdis'                    # "spdis" for spatially distributed, "smdis" for spatially semidistributed
+RF$rwave     <- 'k01'                      # 'routing wave for distributed model. swe': clawpack-SWE | 'k01': 1D kinematic routing
+
+RF$mask    <- 'mask.tif'                   # 1/0 for cells within/out of watershed. Geometadata is obtained from this map. path relative to regionp
+RF$dem     <- 'demfilled_patch.tif'        # enhanced-connectivity   DEM [m]
+RF$hrus    <- 'hrus.tif'                   # HRU class map [0=out of domain]
+RF$dproj   <- CRS('+init=epsg:27700')      # region projection. 27700 :: British National Grid, Ordnance Survery 1936
+
+RF$overpassf <- ''                         # SSM observations. '' for NA
+RF$qhobf     <- 'gaugeEA.Rsav'             # gauge flow and h observations. '' for NA
+RF$gaugesf   <- 'outgrlets.txt'            # locations for timeseries output sampling
+
+RF$assim <- list()
+RF$assim$gau <- list()
+RF$assim$gau$bool <- 0
+RF$assim$gau$twin <- 60*60
+RF$assim$gau$nobs <- 5
+RF$assim$op <- list()
+RF$assim$op$bool  <- 0
+RF$assim$op$qc    <- 'gstat'                                                  # QC of SAR-based WLOs: oulier analysis of the innovations [0: noQC, < 0: global z-scores, > 0: radius for moving window z-scores, 'gstat': geostatistically obtained window]
+RF$assim$qtrans     <- 1                                                      # if 1, error scaling in inflows Q'= [Q+1000]^(5/3) is done for the assimilation step
+
+RF$update <- list()
+RF$update$h      <- list()
+RF$update$h$bool <- 1
+RF$update$fr <- list()                                                        # channel friction
+RF$update$SGCfr$bool   <- 1                                                   # LF$nparchar vector length
+RF$update$SGCfr$infac  <- 1                                                   # not NA to keep a minimum constant variance
+RF$update$SGCfr$minval <- c(0.04,0.03,0.025)
+RF$update$dwsl <- list()
+RF$update$dwsl$bool    <- 1
+RF$update$dwsl$infac   <- 0.0                                                 # 0: preserves variance along assimilation steps
+RF$update$dwsl$minval  <- 3.0E-05
+RF$update$dwsl$pos     <- c(384537.5, 227887.5)                               # Haw Bridge | geographical position for filter localisation
+RF$update$bed <- list()
+RF$update$bed$bool    <- 0
+RF$update$bed$cv      <- 0.15
+RF$update$bed$infac   <- 1                                                    # in [0,1] 0 : preserve variance previous to updating. 1 : no inflation
+RF$update$bed$stderf  <- '-.rds'

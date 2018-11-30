@@ -1,0 +1,22 @@
+# Severn-Teme-Avon watershed
+# CHARACTER      :: hrusf                "NA" for either lumped simulation or completely distributed simulation.
+#                                        If available, the input map is a mask map of integers, where 0 is for the area outsize the watershed, and the indices within the watershed must be coded as the sequence 1:nhrus
+
+RF$maskf <- 'mask.tif'                   # 1/0 for cells within/out of watershed. Geometadata is obtained from this map. path relative to regionp
+#RF$demf  <- 'nexburn1000_dtme_crp.tif'  # digital elevation model DEM [m]. path relative to regionp
+# demfilled == demfilled_patch, but the patch also has data out of the catchment
+RF$demf  <- 'demfilled_patch.tif'        # enhanced-connectivity   DEM [m]. path relative to regionp
+RF$hrusf <- 'hrus.tif'                   # HRU class map                  . path relative to regionp
+RF$dproj <- CRS('+init=epsg:27700')      # region projection. 27700 :: British National Grid, Ordnance Survery 1936
+
+
+
+
+                                        # maps for distributed routing
+                                        # DTM with/without channel bottoms [to decide]
+RF$cmsk <- 'cmsk.tif'      # channel classes [0:land, 1...n increasing order]
+RF$cwid <- 'cwid.tif'      # channel width [m]
+RF$cdep <- 'cdep.tif'      # channel depth [m] + to be added [within the model] to obtain the river bank heights
+RF$ldd  <- 'lddfilled.tif' # ldd: 7 8 9   simord : irow icol from the upper-left corner
+RF$rord <- 'simorder.rds'  #      4 5 6
+RF$outs <- 'outlets.map'   #      1 2 3

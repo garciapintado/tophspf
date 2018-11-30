@@ -1,0 +1,533 @@
+topHSPF_DA <- function(dsn, dsndat, region, event, scn, dsnDAR,
+                       HSPF, prjCRS=NULL, rivSPf=NULL) {
+
+ # +++ purpose +++
+ #   Execute a Monte Carlo + DA run for the topHSPF hydrologic model.
+ #   Parameters for MC analysis are obtained from parameter files ('headers') for the watershed & event
+ #
+ # Record of revisions:
+ #   Date        Programmer         Description of change
+ #   ---         -----------------  ---------------------
+ #   10/10/2015  J. Garcia-Pintado  Original code
+ #
+ #  CHARACTER, INTENT(IN) :: dsn              path to tophspf HOME database
+ #  CHARACTER, INTENT(IN) :: dsndat           path to tophspf PERM database
+ #  CHARACTER, INTENT(IN) :: region           folder, within dsn-s,  for the region
+ #  CHARACTER, INTENT(IN) :: event            folder, within region, for the event
+ #  CHARACTER, INTENT(IN) :: scn              folder, within event,  for the scenario
+ #  CHARACTER, INTENT(IN) :: prjCRS           EPGS-mode PROJ4 projection code
+ #  list, INTENT(IN)      :: rivSPf           [$dsn,$layer] slots - just for plotting
+
+ # Notes:
+ #   This example is to be run on a typical MPI cluster.
+ #   MPI cluster should have been launched normally e.g., through impi or hp-mpi tools before this programme is stated
+
+ ## R environment
+ options(digits=10)
+ options(warn=1)
+ 
+ Sys.setenv(TZ='GMT')
+ HOME <- Sys.getenv('HOME')
+ CLAW <- Sys.getenv('CLAW')
+ 
+ originTimeStampTZ <- '1970-01-01 00:00:00 GMT'
+ yr <- 365*24*3600             # [s]
+ km <- 1000                    # [m]
+
+ require(tseries)
+ require(hydrosim)
+ require(colorRamps)
+ require(Matrix)
+ require(fields)     # earth-distance calculations
+
+ Rsrc <- list()
+ Rsrc[[1]] <- file.path(dsnDAR,'filters')
+ Rsrc[[2]] <- file.path(HSPF,'R','hspf')
+ Rsrc[[3]] <- file.path(HSPF,'R','hpc')
+ Rsrc[[4]] <- file.path(HSPF,'R','utils')
+ Rsrc[[5]] <- file.path(CLAW,'Rclaw')
+ for (i in 1:length(Rsrc)) {
+   srcs <- dir(Rsrc[[i]], pattern='.R$')
+   for (j in 1:length(srcs)) {
+     source(file.path(Rsrc[[i]],srcs[j]))}
+ }
+ source(file.path(dsnDAR, 'hpc', 'myclusterSplit.R'))             # function ::
+ source(file.path(dsnDAR, 'stats','perfstatf.R'))
+ source(file.path(dsnDAR, 'stats','varSparse.R'))
+ source(file.path(dsnDAR, 'stats','sdSparse.R')) 
+ source(file.path(dsnDAR, 'utils','acc2ins.R'))
+ source(file.path(dsnDAR, 'utils','deListTS.R')) 
+ source(file.path(dsnDAR, 'utils','genSGCgrpar.R'))
+ source(file.path(dsnDAR, 'utils','irts2matlab.R'))
+ source(file.path(dsnDAR, 'utils','readRgaugeobs.R'))
+ source(file.path(dsnDAR, 'utils','simQin2ana.R'))
+ source(file.path(dsnDAR, 'utils', 'sqrtm_rs.R'))
+
+ dsnscn  <- file.path(dsn,    region, event, scn) # data for analysis (whole path) in HOME volume    [backed-up]
+ dsnsim  <- file.path(dsndat, region, event, scn) # data for analysis (whole path) in storage volume [non-backed-up]
+ dir.create(file.path(dsnsim,'results'))
+ 
+ source(file.path(dsnscn,'readRF.R'),        local=TRUE)  # basic environment & forecast information
+ source(file.path(dsnscn,'readprm.R'),       local=TRUE)  # parameters for assimilation
+ source(file.path(dsnscn,'header_mc.R'),     local=TRUE)  # parameters for Monte Carlo analysis & sub-catchment inheritance rules
+ source(file.path(dsnscn,'header_event.R'),  local=TRUE)  # parameters for input time series info and pre-processing
+
+ RF$path$dsnscn  <- dsnscn
+ RF$path$oufld   <- file.path(dsnsim,'output')
+ RF$path$outsfld <- file.path(dsnsim,'output','ts')
+ prm$m <- RF$m
+ 
+ K01 <- NULL
+
+ ## initial setup / data
+ if (!('libgeo' %in% names(RF)))                              # geostatistical library ['gstat' or 'geoR']
+   RF$libgeo <- 'geoR'
+
+ # read DTM, mask and model domain geometry
+ maskSP <- readGDAL(file.path(dsnscn,RF$maskf))
+ maskV    <- as.logical(maskSP@data[,1])                         # logical 1D array [1/0]
+ maskV[is.na(maskV)] <- FALSE
+
+ RF$G <- getgmeta6.SP(maskSP, proj=RF$dproj)
+
+ demSP <- readGDAL(file.path(dsnscn,RF$demf))
+ proj4string(demSP) <- prjCRS
+ demV <- demSP@data[,1]
+
+ hruSP <- readGDAL(file.path(dsnscn,RF$hrusf))
+ hruV <- as.integer(hruSP@data[,1])
+
+ # convert datetime strings for start/end simulation into POSIXct time 
+ RF$staT    <- as.POSIXct(RF$staTStr, origin=originTimeStampTZ, tz='GMT')
+ RF$endT    <- as.POSIXct(RF$endTStr, origin=originTimeStampTZ, tz='GMT')
+ RF$seqT    <- seq(RF$staT,RF$endT,by=RF$dto)
+ RF$seqTStr <- strptime(RF$seqT,format='%Y-%m-%d %H:%M:%S', tz='GMT')
+
+ nto <- length(RF$seqT)                                   # INTEGER. integration outer time steps
+ nti <- nto * RF$dto / RF$dti                             # length of time series for internal topHSPF calculation & return
+ 
+ # obtain total integration time as seconds
+ RF$inctime <- as.numeric(difftime(RF$endT, RF$staT, units='secs'))
+
+ # load flow gauge metadata (as SpatialPointsDataFrame)
+ RF$y$qou$g$meta <- read.table(file.path(dsnscn,RF$y$qou$g$fmeta),
+                               header=FALSE, as.is=TRUE)
+ names(RF$y$qou$g$meta)       <- c('x','y','name')
+ coordinates(RF$y$qou$g$meta) <- c('x','y')
+ proj4string(RF$y$qou$g$meta) <- prjCRS
+ RF$y$qou$g$meta@data['z']    <- over(RF$y$qou$g$meta,demSP)
+ 
+ # load kinematic/SWE routing parameters and write as model input
+ if (RF$simspdist == 'spdis') {
+   if (RF$rwave == 'k01') {
+     cat('loading 1D kinematic wave parameters\n')
+     source(file.path(dsnscn,'readK01.R'),       local=TRUE)  # for 1D kinematic routing
+   } else if (RF$rwave == 'swe') {
+     cat('loading clawpack-SWE parameters\n')
+         source(file.path(dsnscn,'readGC.R'),        local=TRUE)  # for clawpack-swe routing
+     dir.create(file.path(dsnsim,'input','clawpack'))
+     writeGC(GC$rundata, dsn=file.path(dsnsim,'input','clawpack'))
+     writeGDAL(demSP, fname=GC$demf@fname, drivername='AAIGrid',
+             options=c('NODATA=-9999.00','DECIMAL_PRECISION=4'))   # ArcGIS
+   }
+ }
+
+ # load y data :: EO - SAR SWI as RF$y$usz$s$data
+ source(file.path(dsnscn,'readOP.R'), local=TRUE)
+
+ # load y data :: tseries with outflows
+ if (!is.null(RF$y$qou$g)) {
+   RF$y$qou$g$data <- readRgaugeobs(file.path(dsnscn, RF$y$qou$g$fname),
+                                 RF$y$qou$g$meta, 'irtsreg')
+ }
+
+ if (1 > 2) { # "20070508" "20070530" "20070621" "20070723"
+
+   library(colorRamps)
+   plotGmeta(layer=hruSP, col=matlab.like(9))
+   points(RF$y$qou$g$meta,col='darkred',pch=3)
+   ogrInfo(dsn=rivSPf$dsn,layer=rivSPf$layer)
+   rivSP   <- readOGR(dsn=rivSPf$dsn, layer=rivSPf$layer)
+   plot(rivSP, col='red',lwd=1, add=TRUE)
+   plotGmeta(layer=RF$y$uzs$s$data[['20070508']],
+     col=grey.colors(100, start=0, end=1))
+ }
+
+ 
+ # read assimilation scheduling protocol 
+ source(file.path(dsnscn,'readRuntimes.R'), local=TRUE) # starttime & launching model times) into RF
+
+ ## MC randomization
+ # init parlst, which will later regenerated for each ensemble member
+ npar <- length(GP)
+ parlst <- GP
+ for (i in 1:npar) {
+   tmpexpr <- eval(parse(file="",text=paste("GP$",names(parlst)[i],sep="")))
+   if (class(eval(tmpexpr)) == "numeric") {
+     parlst[[i]]  <- eval(tmpexpr)
+   } else {                  # "character"
+     parlst[[i]]  <- readRast(RF$G, eval(tmpexpr),   dsn=dsnscn, nhrus=RF$nhrus)
+     if (class(parlst[[i]]) == 'SpatialGridDataFrame')
+       parlst[[i]] <- parlst[[i]]@data[,1]
+   }
+ }
+ 
+ ## Monte Carlo perturbation & initial conditions
+ # global parameters : always generated. Later overwritten either by prior parameters or newly generated by Monte Carlo
+ MCgpar <- matrix(NA, nrow=npar, ncol=RF$m)   # standard DA ensemble deployment
+ #rownames(MCgpar) <- c("runpid",names(GP)); MCgpar["runpid",] <- 1:maxruns
+ rownames(MCgpar) <- names(GP)
+
+ for (ipar in 1:npar) {
+   if (MCflags[ipar]) {
+     MCgpar[ipar,] <- runif(RF$m, min(GP[[ipar]]),max(GP[[ipar]]))               # random sampling ~U(min,max)
+   } else {
+    if (is.numeric(GP[[ipar]][1]))
+      MCgpar[ipar,] <- rep(GP[[ipar]][1], RF$m)
+   }                                                                          # inequality constraints:
+   if (names(GP)[ipar] == 'ceps') {                                           # ceps <= cepsc
+     MCgpar[ipar,] <- pmin(MCgpar[ipar,], MCgpar['cepsc',])
+   }
+   if (names(GP)[ipar] == 'uzs') {                                            # uzs <= uzsn
+     MCgpar[ipar,] <- pmin(MCgpar[ipar,], MCgpar['uzsn',])
+   }
+   if (names(GP)[ipar] == 'lzs') {                                            # lzs <= lzsn
+     MCgpar[ipar,] <- pmin(MCgpar[ipar,], MCgpar['lzsn',])
+   }
+ }
+
+ ## Monte Carlo parameter for K01 wave
+ if (RF$simspdist == 'spdis' && RF$rwave == 'k01') {
+     K01$par <- list()
+     K01$par$SGC <- genSGCgrpar(file.path(dsnscn,K01$SGCmc), RF$m,
+                                RF$ana$SGCfr$min)                  # [ngr,7,m] randomise friction coefficients
+     K01$par$dsl <- pmax(matrix(rnorm(RF$m, mean=K01$dsl[1], sd=K01$dsl[2]),1,RF$m),   # Monte Carlo: FREE downstream slope [,m]
+                         RF$ana$dsl$min)
+ }
+
+ # subwatershed-specific parameters
+ if (RF$mcmode == 0) {                                                           # mcmode == 0 :: inherit parameters from previous run
+   if (!file.exists(RF$inh$prior))
+     stop('topHSPFmcf:: prior simulation not found')
+   load(file.path(RF$inh$prior,'output','MCwpar.Rsav'))                          # prior MCwpar
+   load(file.path(RF$inh$prior,'output','glike.Rsav'))                           # prior glike
+   MCwpar  <- selectPriorMC(MCwpar, glike, m, RF$inh$stat, RF$inh$decreasing)
+ } else {                                                                        # mcmode == 1 :: new Monte Carlo generation
+   MCwpar <- vector('list', RF$nhrus)
+   if (length(WP) > 0) {
+     for (iw in 1:RF$nhrus) {
+       MCwpar[[iw]] <- matrix(NA, nrow=npar, ncol=RF$m)
+       rownames(MCwpar[[iw]]) <- names(GP)
+       for (ipar in 1:npar) {
+         if (MCflags[ipar]) {
+           #MCwpar[[iw]][ipar,] <- runif(RF$m,min(WP[[iw]][[ipar]]),max(WP[[iw]][[ipar]]))             # random sampling ~U(min,max)
+           MCwpar[[iw]][ipar,] <- MCgpar[ipar,] # simple inheritance from Global parameters
+         } else {
+           if (is.numeric(WP[[iw]][[ipar]][1]))
+             MCwpar[[iw]][ipar,] <- rep(WP[[iw]][[ipar]][1], RF$m)
+         }                                                                           # inequality constraints:
+         if (names(GP)[ipar] == 'ceps') {                                            # ceps <= cepsc
+           MCwpar[[iw]][ipar,] <- pmin(MCwpar[[iw]][ipar,], MCwpar[[iw]]['cepsc',])
+         }
+         if (names(GP)[ipar] == 'uzs') {                                             # uzs <= uzsn
+           MCwpar[[iw]][ipar,] <- pmin(MCwpar[[iw]][ipar,], MCwpar[[iw]]['uzsn',])
+         }
+         if (names(GP)[ipar] == 'lzs') {                                             # lzs <= lzsn
+           MCwpar[[iw]][ipar,] <- pmin(MCwpar[[iw]][ipar,], MCwpar[[iw]]['lzsn',])
+         }
+       }
+     }
+   }
+ } # endif mcmode
+
+ # model files :: write static distributed maps
+ topHSPFwriteStatic(RF, K01)
+
+ makehpcScript(RF$path$hpcscript, RF$path$data,                  # create High Performance Computing .sh script -- RocksCluster
+               RF$region, RF$event, RF$scn,
+               'input', 'runhydro.run', RF$modexe, RF$m, RF$np)
+
+ nt  <- length(RF$runtimes)
+ Ets    <- vector('list',nt)                                     # ensemble timeseries forecast [mm]
+ Etsm3s <- vector('list',nt)                                     # "  " summary outflow [m3/s]
+ 
+ ## start looping
+ for (it in 1:nt) {                                                     # forecast step
+   cat('Loop number ',it,'\n')   
+
+   itStr <- formatC(it, width=4, flag='0')
+   RF$it <- it                                                       # just required for debug mode in analyse
+   RF$timenow <- RF$runtimes[it]
+   if (it < length(RF$runtimes)) {
+     RF$timenex <- RF$runtimes[it+1]
+     RF$freerun <- FALSE
+   } else {
+     RF$timenex <- RF$endT
+     RF$freerun <- TRUE
+   }
+   seqfT <- seq(trunc(RF$timenow,'hour'), RF$timenex, by=RF$dto)          # model input | this forecast time sequence
+   if (max(seqfT) < RF$timenex)
+     seqfT <- c(seqfT,max(seqfT) + RF$dto)                  # assure it covers next interruption point (timenex)
+   ntof <- length(seqfT)                                    # forecast outer timesteps
+   ntif <- as.integer(ntof * RF$dto / RF$dti)               # forecast inner timesteps
+   
+   # write [links to] dynamic model input
+   cat('writing links to dynamic model input\n')
+   seqfTStr <- strptime(seqfT,format='%Y-%m-%d %H:%M:%S', tz='GMT')
+   #rainfs  <- paste(substr(seqfTStr,1,4),substr(seqfTStr,6,7),substr(seqfTStr,9,10),
+   #              substr(seqfTStr,12,13),substr(seqfTStr,15,16),'.bin',sep='')                 # AAAAMMDDhhmm output gridded QPE file
+   rainfs  <- paste(substr(seqfTStr,1,4),substr(seqfTStr,6,7),substr(seqfTStr,9,10),
+                    substr(seqfTStr,12,13),'00.bin',sep='')                                    # approximation to hourly rainfall
+
+   rainfs  <- file.path(dsnrain,rainfs)                                                        # pathed names to binary rainfall maps
+   write(rainfs, file=rainfp)
+   if (length(rainfs) != ntof)
+     stop("rainfall stack length != ntof")
+
+   #petT  <-  pe$time[pe$time >= trunc(min(seqfT),'hour') & pe$time <= trunc(max(seqfT),'hour')]
+   petinp <- pe$value[pe$time >= trunc(min(seqfT),'hour') & pe$time <= trunc(max(seqfT),'hour')]
+   if (length(petinp) != ntof)
+     stop("petinp tss length != ntof")
+
+   # serial writing of model files
+   cat('writing topHSPF input files\n')
+   parnames <- names(GP)
+   err <- NULL
+   
+   for (im in 1:RF$m) { # land parameters and initial conditions
+     for (ipar in 1:npar) {
+       vdone <- FALSE
+       vname <- rownames(MCgpar)[ipar]
+       if (exists('Els')) {                                           # previous forecast available
+         if (vname %in% names(Els)) {
+           itgo <- which(Els[[vname]]$time == RF$timenow)               # number of times gridded output
+           if (!RF$ana[[vname]]$u)
+             parlst[[ipar]] <- Els[[vname]]$stack[[itgo]][,im]        # forecast
+           else {                                                      # analysis
+             xids <- which(Elst_a$xdf$xtype == vname & Elst_a$xdf$xsen == 's'
+                           & Elst_a$xdf$xtime == RF$timenow)
+             if (length(xids) != RF$G$cells)
+               stop('topHSFD_DA:: --ERROR 002--')
+             parlst[[ipar]] <- Elst_a$E[xids,im]
+           }
+           vdone <- TRUE
+         }
+       }
+       if (!vdone) {
+         if (!is.na(MCgpar[ipar,im]))
+           parlst[[ipar]] <-  as.numeric(MCgpar[ipar,im])
+         if (length(WP) > 0) {
+           for (iw in 1:max(RF$nhrus)) {
+             if (!is.na(MCwpar[[iw]][ipar,im]))
+               parlst[[ipar]][iw] <- MCwpar[[iw]][ipar,im]
+           }
+         }
+       }
+     }
+     err[im]  <- writeTopHSPF(pid = im,
+                              dto=RF$dto, dti=RF$dti, nto=ntof,
+                              hruV     = hruV,
+                              rain     = rainfs,
+                              petinp   = petinp,
+                              parlst   = parlst,
+                              RF, K01)
+   } # end for im
+   if (sum(err) != 0)
+     stop('topHSPF_DA :: writeTopHSPF return error code != 0')
+
+   # required slot for the uzs -> uzrat transform function
+   #RF$y$uzs$s$data$uzsn <- matrix(NA,RF$G$cells,RF$m)
+   #for (iu in 1:RF$nhrus) {
+   #  RF$y$uzs$s$data$uzsn[hruV==iu,] <- rep(MCwpar[[iu]]['uzsn',],each=sum(hruV==iu)) 
+   #}
+   RF$y$uzs$s$data$linmul <- 1.0 / MCgpar['uzsn',]                                     # [m] note: no spatial variation allowed
+   
+   # parallel model run
+   if (RF$hpc == 'mac') {
+     runtime <- macRunTHjob(RF)
+   } else {
+     err <- rocksRunTHjob(RF)      # monitor with :: qstat
+     if (err != 0)
+       stop('topHSPF_DA :: rocksRunTHjob return error code != 0')
+   } # as.POSIXct(1178614800)
+
+   cat('reading topHSPF output\n')
+
+   # read stack of gridded ensemble forecast [all variables ---and parameters if these are to be updated---]
+   Els <- readHSPFgr(RF, vtypes=c('ceps','surs','ifws','uzs','lzs','agws','gwvs'))
+   
+   # read time series of ensemble forecast
+   Ets[[it]] <- readHSPFts(RF)
+
+   Etsm3s[[it]] <- vector('list',4) # ts [mm] for storages, [mm/dti] flows
+   names(Etsm3s[[it]]) <- c('suro','ifwo','agwo','rnof')
+   for (iv in 1:4) {
+     vname <- names(Etsm3s[[it]])[iv]
+     Etsm3s[[it]][[iv]] <- list()
+     for (iu in 1:RF$nhrus) { # each HRU
+       if (vname != 'rnof')
+         val <- Ets[[it]][[vname]][[iu]]$sim * swareas[iu] / 1000 / RF$dti
+       else
+         val <- (Ets[[it]]$suro[[iu]]$sim + Ets[[it]]$ifwo[[iu]]$sim + Ets[[it]]$agwo[[iu]]$sim) *
+                swareas[iu] / 1000 / RF$dti      
+       Etsm3s[[it]][[iv]][[iu]] <- irts(time = Ets[[it]][[1]][[iu]]$time, value= val)    # map to [m3/s]
+     }
+     names(Etsm3s[[it]][[iv]]) <- RF$y$qou$g$meta$name # connect to gauge observations warning. User should check this
+   }; rm(val)
+   
+   if (!RF$freerun) {
+     gauDA <- list()
+     if (!is.null(RF$y$qou$g)) { # catchment-scale runoff
+       if (RF$y$qou$g$use) {
+         gauDA$qou <- simQin2ana(RF$y$qou$g$data, RF$timenow, RF$timenex, RF$m,
+                                 Etsm3s[[it]]$rnof, names(RF$y$qou$g$data),
+                                 RF$y$qou$g$twin, RF$y$qou$g$nto,
+                                 RF$y$qou$g$r, RF$ana$qou$trf) # return NULL for non-available data
+       }
+     }
+     aug <- NULL
+     cat('running analysis |',as.character(Sys.time()),'\n')
+     xu <- sapply(RF$ana[names(Els)],function(x){x$u})
+
+
+   #if (it == 3)
+   #  browser()
+
+     Elst_a <- analyse(RF$G, it, prm, Els[xu], RF$y, gauDA,          # list with assimilation information
+                       aug=aug, ana=RF$ana,
+                       DEM=NULL, dsn=dsnsim, debugmode=TRUE, mpi=TRUE)
+   } # end !freerun
+ } # it loop
+
+ Ets    <- deListTS(Ets, field='sim')              
+ Etsm3s <- deListTS(Etsm3s)                        # standard irts
+ glike  <- getGlike(RF$nhrus, RF$m, xls=Etsm3s$rnof, yls=RF$y$qou$g$data, dti=RF$dti) 
+ #
+ #
+ 
+ saveRDS(RF,      file=file.path(RF$path$oufld, paste('RF_',itStr,'.Rds',sep='')))       # just the last
+ saveRDS(MCgpar,  file=file.path(RF$path$oufld, paste('MCgpar',itStr,'.Rds',sep='')))    # just the last
+ saveRDS(MCwpar,  file=file.path(RF$path$oufld, paste('MCwpar',itStr,'.Rds',sep='')))    # just the last
+ saveRDS(K01,     file=file.path(RF$path$oufld, paste('K01_',itStr,'.Rds',sep='')))
+ saveRDS(glike,  file=file.path(RF$path$oufld, paste('glike_',itStr,'.Rds',sep='')))
+ saveRDS(swareas, file=file.path(RF$path$oufld, paste('swareas_',itStr,'.Rds',sep='')))
+ saveRDS(Ets,     file=file.path(RF$path$oufld, paste('Ets.Rds',sep='')))
+ saveRDS(Etsm3s,  file=file.path(RF$path$oufld, paste('Etsm3s.Rds',sep=''))) 
+
+ # plot scatterplots with performance statistics with respect to initial parameters
+ glikpar <- list()
+ glikpar$wpar <-  MCwpar                # list of matrices
+ glikpar$SGCfr <- K01$par$SGC[,'n',]    # augment list with global kinematic wave parameters
+ glikpar$dsl   <- K01$par$dsl
+ plotGlike(glikpar, glike, stats='all', MCflags, K01$par,
+             dsnplt = file.path(dsnsim,'output','plots'))
+
+ # sample simulations: plot balances for one ensemble member with best statistics at each subcatchment
+ dsnplt <- file.path(dsnsim,'output','plots','ts')
+ for (iu in 1:RF$nhrus) {
+   Emaxid <- which.max(glike[[iu]]['E',])  # Emaxid <- which.max(MCgpar['agwr',])
+   topHSPFplotTS(Ets, Etsm3s,                     # 
+                 dsnplt = file.path(dsnplt,paste(names(glike)[iu],'_bestE',sep='')),
+                 plothrus=TRUE, qobs=RF$y$qou$g$data,
+                 hrunames=names(glike), field='sim', im=Emaxid)
+ }
+
+ # sample simulations: plot balances for a specific member [e.g. im=1]
+ if (1 > 2) {
+ topHSPFplotTS(Ets, Etsm3s,
+               dsnplt = file.path(dsnplt,paste('im',im,sep='_')),
+               plothrus=TRUE, qobs=RF$y$qou$g$data,
+               hrunames=names(glike), field='sim', im=1) 
+ }
+
+ # map runoff into a list readable as water inflows by floodDA()
+ # TODO:: use the new Etsm3s
+ qsim <- ts2DA(Etsm3s, glike=glike, mo=NULL)
+ topHSPFplotTSrunoff(qsim, RF$y$qou$g$data,
+                     dsnplt = file.path(dsnsim,'output','plots','ts'))
+
+ # save runoff timeseries
+ dsnsav <- file.path(RF$path$oufld, 'ts', 'R')
+ dir.create(dsnsav, recursive=TRUE)
+ saveRDS(qsim, file=file.path(dsnsav, 'qsim.Rds'))
+
+ #dsnsav <- file.path(RF$path$oufld, 'ts', 'matlab')
+ #irts2matlab(qsim, dsnsav, field='irts', onames=names(qsim))
+
+ if (3 > 2) {
+  library(colorRamps)
+
+  im <- which.max(glike[[7]]['E',])                 # best at Evesham [river Avon]
+  imStr <- formatC(im,width=5,flag="0",format="d")
+
+  pltvars <- c('surs','ifws','uzs','lzs','agws')
+  zlims <- matrix(c(0,70,
+                    0,100,
+                    0,10,
+                    0,30,
+                    0,250),ncol=2,byrow=TRUE)
+   if (is.null(rivSPf)) {
+     rivSP <- NULL
+   } else {
+     rivSP <- readOGR(dsn=rivSPf$dsn, layer=rivSPf$layer)
+   }
+
+  for (iv in 1:length(pltvars)) {
+   pltvar <- pltvars[iv]
+   zlim   <- zlims[iv,]
+   
+   varfiles <- dir(file.path(dsnsim,'output','maps',imStr),pattern=paste('fort',pltvar,sep='.'))
+   tou <- as.POSIXct(as.numeric(substr(varfiles,11,20)), origin=originTimeStampTZ,
+                     tz='GMT') # POSIX double representation
+   touStr <- strptime(tou,format='%Y-%m-%d %H:%M:%S', tz='GMT')
+   varSGDF <- demSP
+   #plotGmeta(layer=demSP, col=topo.colors(100))
+   #for (i in 1:length(varfiles)) {
+
+   dsnplt <- file.path(dsnsim,'output','plots','maps',pltvar)
+   if (!file.exists(dsnplt))
+     dir.create(dsnplt, recursive=TRUE)
+
+   for (it in 1:length(varfiles)) {
+     varSGDF@data[,1] <- readBin(file.path(dsnsim,'output','maps',imStr,varfiles[it]), what='double',n=RF$G$cols*RF$G$rows)
+     #plotGmeta(layer=varSGDF, col=matlab.like(100), add=TRUE, zlim=zlim)
+     #text(x=RF$G$e,y=RF$G$n,label=touStr[i],col='white', adj=c(1.1,1.2))
+     #Sys.sleep(2.0)
+     fname  <- paste(file.path(dsnplt,substr(varfiles[it],6,20))) # .png extension not required
+     printMap(varSGDF, fnamep=fname, main = paste(pltvar,touStr[it],sep=' | '),
+              zlim=zlim, detlim=0.0, png.plot=TRUE, gmt.border=FALSE,
+              scalar=4, colpal=matlab.like(100), colpow=1,
+              leglab=paste(pltvar,'[mm]',sep=''), SLDF=rivSP)
+   }
+  } # end for iv plot
+ } # end tmp plotting code
+
+
+
+
+ # return(0)
+#} # end function topHSPF_DA
+ 
+   #MCres[[im]]$suro.m3s <- apply(MCres[[im]]$suro.m3s,2,acc2ins)
+
+                                        # tmp debugging code
+
+
+if (1 > 2) {
+ qinit <- DEMsp
+ ns <- RF$G$cols * RF$G$rows
+ qinit@data[,1] <- readBin(file.path(dsnsim,'fort.qinit'), what='double',n=ns)
+ plotGmeta(layer=qinit, col=matlab.like(100))
+ digitGmeta(layer=qinit, type='points')
+
+ supy <- DEMsp
+ supy@data[,1] <- readBin(file.path(dsnsim,'supy.tmp'), what='double',n=ns)
+ plotGmeta(layer=supy, col=matlab.like(100))
+ digitGmeta(layer=supy, type='points')
+
+ msupy <- DEMsp
+ msupy@data[,1] <- readBin(file.path(dsnsim,'msupy.tmp'), what='double',n=ns)
+ plotGmeta(layer=msupy, col=matlab.like(100))
+ digitGmeta(layer=msupy, type='points')
+}
+

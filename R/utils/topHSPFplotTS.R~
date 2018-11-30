@@ -1,0 +1,266 @@
+topHSPFplotTS <- function(modres, simseqT, dsnplt, plothrus=FALSE, qobs=NULL, hrunames) {
+ # +++ purpose +++
+ # plot mean diagnosis timeseries for each store in the topHSPF model
+ # a single simulation serves as input
+ #
+ # modres   :: list with results from a single topHSPF run
+ # simseqT     :: POSIXct object to label the x (time) axis
+ # plothrus :: flag. TRUE to plot timeseries at each subwatershed,
+ #                   FALSE to plot mean watershed timeseries
+ # qobs     :: if not NULL, observed hydrographs will be added to the runoff plots
+
+ if (!file.exists(dsnplt))
+  dir.create(dsnplt)
+
+ nhrus <- ncol(modres$rain.mm)-1
+ deltat <- as.double(simseqT[2]) - as.double(simseqT[1])
+
+ for (iw in 1:nhrus) {   # one PDF / HRU
+   if (!plothrus)
+     iw <- nhrus + 1
+   #iw <- ifelse(nhrus == 0, 1, nhrus+1)  # colindex for mean values in watershed
+  cat('plotting iw:',iw,'\n')
+  nrows <- 3  # up to 12 plots
+  ncols <- 4
+  paper.width  <- 7.5*ncols      # cm
+  paper.height <-   6*nrows      # cm
+  fname <- paste('rhu_',iw,'_',hrunames[iw],'.pdf',sep='')
+
+  pdf(file=file.path(dsnplt,fname), width=paper.width/2.54+0.1, height=paper.height/2.54+0.1)
+  mat <- matrix(1:(nrows*ncols), nrow=nrows, ncol=ncols, byrow=TRUE)
+  layout(mat=mat,widths=lcm(rep(paper.width/ncols,ncols)), heights=lcm(rep(paper.height/nrows,nrows)), respect=TRUE)
+  par.default <- par(no.readonly = TRUE)
+  par(cex=0.6)
+  par(mgp=c(2.3,1,0))  # para regular la distancia (2.5) de los titulos de ejes a la figura
+  par(mai=c(1.1,1.5,0.6,0.1)/2.54)
+
+  # plot 1: rainfall & potential evapotranspiration
+  ylim <- c(0,range(c(modres$rain.mm[,iw],modres$petinp.mm[,iw]))[2])
+  plot(simseqT,modres$rain.mm[,iw], type='l', col='navyblue', main="Rainfall and PEVTP",
+       xlab=paste("Inner Timestep (",deltat/3600," [h])",sep=""),
+       ylab="Watershed Mean [mm]", ylim=ylim, font.lab=2)
+  lines(simseqT,modres$petinp.mm[,iw], col='green4')
+  legend(x="topleft",legend=c("rain","petinp"),col=c("navyblue","green4"),
+         lty=1, bty="n")
+
+  # water balances
+  # ---
+  # plot 2: balance around interception storage (ceps)
+  #cat('plot 2\n')
+  supycum <- cumsum(modres$supy.mm[,iw])                 #input to CEPS
+  ceps0   <- modres$ceps.mm[1,iw] - modres$supy.mm[1,iw] +
+             modres$suri.mm[1,iw] + modres$cepe.mm[1,iw]
+  ceps    <- modres$ceps.mm[,iw]                         #CEPS storage  (ceps_ini=0.0 mm. TODO: Input from PWAT-STATE1)
+  suricum <- cumsum(modres$suri.mm[,iw])                 #output toward SURS
+  cepecum <- cumsum(modres$cepe.mm[,iw])                 #output to evapotranspiration
+
+  plot(simseqT,supycum,type='l',main="CEPS balance",
+       xlab=paste("Inner Timestep (",deltat/3600," [h])",sep=""),
+       ylab="Watershed Mean [mm]",lwd=3, font.lab=2)
+  lines(simseqT,ceps,col='blue')
+  lines(simseqT,suricum,col='orange')
+  lines(simseqT,cepecum,col='cyan')
+  lines(simseqT,ceps-ceps0+suricum+cepecum,col='green',lty=3)  #should match supycum
+  points(simseqT[1],ceps0,col='blue')
+  legend(x="topleft",legend=c("supycum","ceps","suricum","cepecum","balance"),
+         col=c("black","blue","orange","cyan","green"),
+         lty=c(1,1,1,1,3), lwd=c(3,1,1,1,1),bty="n")
+
+  # plot 3: balance around surface detention storage (surs)
+  surs0    <- modres$surs.mm[1,iw] - modres$suri.mm[1,iw] +
+              modres$suro.mm[1,iw] + modres$ifwi.mm[1,iw] + modres$uzi.mm[1,iw] + modres$infil.mm[1,iw]
+  surs     <- modres$surs.mm[,iw]                        #SURS storage (surs_ini=0.0 mm. TODO: Input from PWAT-STATE1)
+  surocum  <- cumsum(modres$suro.mm[,iw])                #surface lateral outflow
+  ifwicum  <- cumsum(modres$ifwi.mm[,iw])                #output to IFWS
+  uzicum   <- cumsum(modres$uzi.mm[,iw])                 #output to UZS
+  infilcum <- cumsum(modres$infil.mm[,iw])               #output to other storages
+
+  plot(simseqT,suricum,type='l',main="SURS balance",
+             xlab=paste("Inner Timestep (",deltat/3600," [h])",sep=""),
+             ylab="Watershed Mean [mm]",lwd=3, font.lab=2)
+  lines(simseqT,surs,col='blue')
+  lines(simseqT,surocum,col='navyblue')
+  lines(simseqT,ifwicum,col='red')
+  lines(simseqT,uzicum,col='orange')
+  lines(simseqT,infilcum,col='violet')
+  lines(simseqT,surs-surs0+surocum+ifwicum+uzicum+infilcum,col='green',lty=3)  #should match suricum input to SURS
+  points(simseqT[1],surs0,col='blue')
+  legend(x="topleft",legend=c("suricum","surs","surocum","ifwicum","uzicum","infilcum","balance"),
+         col=c("black","blue","navyblue","red","orange","violet","green"),
+         lty=c(1,1,1,1,1,1,3), lwd=c(3,1,1,1,1,1,1),bty="n")
+
+  # plot 4: balance around interflow storage (ifws)
+  #cat('plot 4\n')
+  ifws0    <- modres$ifws.mm[1,iw] - modres$ifwi.mm[1,iw] + modres$ifwo.mm[1,iw]
+  ifws     <- modres$ifws.mm[,iw]                        #IFWS storage (ifws_ini=0.0 mm. TODO: Input from PWAT-STATE1)
+  ifwocum  <- cumsum(modres$ifwo.mm[,iw])                #interflow lateral outflow
+
+  plot(simseqT,ifwicum,type='l',main="IFWS balance",
+             xlab=paste("Inner timestep (",deltat/3600," [h])",sep=""),
+             ylab="Watershed Mean [mm]",lwd=3, font.lab=2)
+  lines(simseqT,ifws,col='blue')
+  lines(simseqT,ifwocum,col='navyblue')
+  lines(simseqT,ifws-ifws0+ifwocum,col='green',lty=3)                    #should match ifwicum input to IFWS
+  points(simseqT[1],ifws0,col='blue')
+  legend(x="topleft",legend=c("ifwicum","ifws","ifwocum","balance"),
+         col=c("black","blue","navyblue","green"),
+         lty=c(1,1,1,3), lwd=c(3,1,1,1), bty="n")
+
+  # plot 5: balance around upper zone storage (uzs)
+  uzs0 <- modres$uzs.mm[1,iw] - modres$uzi.mm[1,iw] +
+          modres$uzet.mm[1,iw] + modres$perc.mm[1,iw]    # this estimate has to be substituted by the real init conditions
+  uzs      <- modres$uzs.mm[,iw]                         # UZS storage
+  uzetcum  <- cumsum(modres$uzet.mm[,iw])                # output to evapotranspiration
+  perccum  <- cumsum(modres$perc.mm[,iw])                # output to other storages (adds to infilcum)
+
+  plot(simseqT,uzicum,type='l',main="UZS balance",          # input to UZS storage
+       xlab=paste("Inner Timestep (",deltat/3600," [h])",sep=""),
+       ylab="Watershed Mean [mm]",lwd=3, font.lab=2)
+  lines(simseqT,uzs,col='blue')
+  lines(simseqT,uzetcum,col='cyan')
+  lines(simseqT,perccum,col='orange')
+  lines(simseqT,uzs-uzs0+uzetcum+perccum,col='green',lty=3)             #should match uzicum input to UZS
+  points(simseqT[1],uzs0,col='blue')
+  legend(x="topleft",legend=c("uzicum","uzs","uzetcum","perccum","balance"),
+         col=c("black","blue","cyan","orange","green"),
+         lty=c(1,1,1,1,3), lwd=c(3,1,1,1,1), bty="n")
+
+  # plot 6: balance around lower zone storage (lzs)
+  lzicum   <- cumsum(modres$lzi.mm[,iw])                 #input to LZS storage
+  lzs0     <- modres$lzs.mm[1,iw] - modres$lzi.mm[1,iw] + modres$lzet.mm[1,iw]
+  lzs      <- modres$lzs.mm[,iw]                         #LZS storage
+  lzetcum  <- cumsum(modres$lzet.mm[,iw])                #output to evapotranspiration
+
+  plot(simseqT,lzicum,type='l',main="LZS balance",
+       xlab=paste("Inner Timestep (",deltat/3600," [h])",sep=""),
+       ylab="Watershed Mean [mm]", font.lab=2,
+       lwd=3, ylim=c(0,max(lzicum,lzs0,lzetcum)))
+  lines(simseqT,lzs,col='blue')
+  lines(simseqT,lzetcum,col='cyan')
+  lines(simseqT,lzs-lzs0+lzetcum,col='green',lty=3)                     #should match lzicum input to LZS
+  points(simseqT[1],lzs0,col='blue')
+  legend(x="topleft",legend=c("lzicum","lzs","lzetcum","balance"),
+         col=c("black","blue","cyan","green"),
+         lty=c(1,1,1,3), lwd=c(3,1,1,1), bty="n")
+
+  # plot 7:  balance around active groundwater storage (agws)
+  agwicum  <- cumsum(modres$agwi.mm[,iw])                #input to agws
+  agws0    <- modres$agws.mm[1,iw] - modres$agwi.mm[1,iw] +
+              modres$agwo.mm[1,iw] + modres$agwet.mm[1,iw]
+  agws     <- modres$agws.mm[,iw]                        #AGWS storage
+  agwocum  <- cumsum(modres$agwo.mm[,iw])                #groundwater lateral outflow
+  agwetcum <- cumsum(modres$agwet.mm[,iw])               #output to evapotranspiration
+
+  plot(simseqT,agwicum,type='l',main="AGWS balance",
+       xlab=paste("Inner Timestep (",deltat/3600," [h])",sep=""),
+       ylab="Watershed Mean [mm]", font.lab=2,
+       lwd=3, ylim=c(0,max(agwicum,agws0,agwocum,agwetcum)))
+  lines(simseqT,agws,col='blue')
+  lines(simseqT,agwocum,col='navyblue')
+  lines(simseqT,agwetcum,col='cyan')
+  lines(simseqT,agws-agws0+agwocum+agwetcum,col='green',lty=3)          #should match agwicum input to AGWS
+  points(simseqT[1],agws0,col='blue')
+  legend(x="topleft",legend=c("agwicum","agws","agwocum","agwetcum","balance"),
+         col=c("black","blue","navyblue","cyan","green"),
+         lty=c(1,1,1,1,3), lwd=c(3,1,1,1,1), bty="n")
+
+  # plot 8: evapotranspiration balance
+  #cat('plot 8\n')
+  taetcum <- cumsum(modres$taet.mm[,iw])                    #total evapotranspitation
+  rempetcum <- cumsum(modres$rempet.mm[,iw])                #remaining non-satisfied evapotranspitation
+  petinpcum <- cumsum(modres$petinp.mm[,iw])                #input potential evapotranspitation
+
+  plot(simseqT,taetcum,type='l',main="Evapotranspiration balance",
+       xlab=paste("Inner Timestep (",deltat/3600," [h])",sep=""),
+       ylab="Watershed Mean [mm]",
+       lwd=3,ylim=c(0,max(petinpcum)), font.lab=2)
+  lines(simseqT,cepecum,col='blue')
+  lines(simseqT,uzetcum,col='violet')
+  lines(simseqT,lzetcum,col='orange')
+  lines(simseqT,agwetcum,col='cyan')
+  lines(simseqT,cepecum+uzetcum+lzetcum+agwetcum,col='green',lty=3)          #should match taetcum
+  lines(simseqT,petinpcum,col='navyblue',lwd=3,lty=2)
+  lines(simseqT,taetcum+rempetcum,col='yellow',lty=2)                        #should match petinpcum
+  legend(x="topleft",legend=c("taetcum","cepecum","uzetcum","lzetcum","agwetcum","balance1","petinpcum","balance2"),
+         col=c("black","blue","violet","orange","cyan","green","navyblue","yellow"),
+         lty=c(1,1,1,1,1,3,2,2), lwd=c(3,1,1,1,1,1,3,1), bty="n")
+
+  # plot 9: lzs/agws and lost water balance
+  igwicum <- cumsum(modres$igwi.mm[,iw])
+
+  plot(simseqT,infilcum+perccum,type='l', main="lzs/agws distribution and lost water balance",
+       xlab=paste("Inner Timestep (",deltat/3600," [h])",sep=""), font.lab=2,
+       ylab="Watershed Mean [mm]", lwd=3, ylim=c(0,max(infilcum+perccum)))
+  lines(simseqT,infilcum,col='orange')
+  lines(simseqT,perccum,col='red')
+  lines(simseqT,igwicum,col='blue')
+  lines(simseqT,lzicum,col='blue4')
+  lines(simseqT,agwicum,col='cyan')
+  lines(simseqT,igwicum+lzicum+agwicum,col='green',lty=3)          #should match infilcum+perccum
+  legend(x="topleft",legend=c("infilcum+perccum","infilcum","perccum","igwicum","lzicum","agwicum","balance"),
+         col=c("black","orange","red","blue","blue4","cyan","green"),
+         lty=c(1,1,1,1,1,1,3), lwd=c(3,1,1,1,1,1,1), bty="n")
+
+  # plot 10: global balance and all stores
+  #cat('plot 10\n')
+  raincum <- cumsum(modres$rain.mm[,iw])
+  plot(simseqT,raincum,type='l',main="Global Balance and Stores",
+       xlab=paste("Inner Timestep (",deltat/3600," [h])",sep=""),
+       ylab="Watershed Mean [mm]", lwd=3, ylim=c(0,max(raincum)), font.lab=2)
+  lines(simseqT,taetcum,col='cyan')
+  lines(simseqT,surocum,col='blue3')
+  lines(simseqT,ifwocum,col='blue4')
+  lines(simseqT,agwocum,col='blue2')
+  lines(simseqT,ceps,col='pink')
+  lines(simseqT,surs,col='yellow')
+  lines(simseqT,ifws,col='brown')
+  lines(simseqT,uzs,col='orangered')
+  lines(simseqT,lzs,col='lightgoldenrod')
+  lines(simseqT,agws,col='orange')
+  lines(simseqT,taetcum+surocum+ifwocum+agwocum+
+              ceps +surs +ifws +uzs +lzs +agws -
+             (ceps0+surs0+ifws0+uzs0+lzs0+agws0),col='green',lty=3)          #should match raincum
+  legend(x="topleft",legend=c("raincum","taetcum","surocum","ifwocum","agwocum",
+                             "ceps","surs","ifws","uzs","lzs","agws","balance"),
+        col=c("black","cyan","blue3","blue4","blue2",
+              "pink","yellow","brown","orangered","lightgoldenrod","orange","green"),
+        lty=c(rep(1,11),3), lwd=c(3,rep(1,11)), bty="n")
+
+  # plot 11: total runoff & components
+  y <- modres$rnof.m3s[,iw]
+  ymax <- max(y)
+  if (!is.null(qobs)) {
+    if (!is.null(qobs[[iw]])){ymax <- max(ymax,value(qobs[[iw]]$irtsmo))} }
+  plot(simseqT,modres$rnof.m3s[,iw],type='l',main="Total Runoff & Components",
+       xlab=paste("Inner Timestep (",deltat/3600," [h])",sep=""),
+       ylab="Runoff [m3/s]", lwd=3, ylim=c(0,ymax),col='navyblue', font.lab=2)
+  lines(simseqT,modres$suro.m3s[,iw],col='blue')                             #surface lateral outflow
+  lines(simseqT,modres$ifwo.m3s[,iw],col='green')                            #interflow lateral outflow
+  lines(simseqT,modres$agwo.m3s[,iw],col='cyan')                             #groundwater lateral outflow
+  if (!is.null(qobs)){
+    if (!is.null(qobs[[iw]])){
+      lines(time(qobs[[iw]]$irtsmo),value(qobs[[iw]]$irtsmo), col='grey')
+    }
+  }
+  legend(x="topleft",legend=c("total","suro","ifwo","agwo"),
+         col=c("navyblue","blue","green","cyan"),
+         lty=1, lwd=c(3,1,1,1), bty="n")
+
+  # plot 12: total runoff and components
+  #cat('plot 12\n')
+  y <- cumsum(modres$rnof.m3s[,iw])*deltat
+  plot(simseqT,y,type='l',main="Total Runoff & Components",
+       xlab=paste("Inner Timestep (",deltat/3600," [h])",sep=""),
+       ylab="Runoff [m3]", lwd=3, ylim=c(0,max(y)),col='navyblue', font.lab=2)
+  lines(simseqT,cumsum(modres$suro.m3s[,iw]),col='blue')
+  lines(simseqT,cumsum(modres$ifwo.m3s[,iw]),col='green')
+  lines(simseqT,cumsum(modres$agwo.m3s[,iw]),col='cyan')
+  legend(x="topleft",legend=c("total","suro","ifwo","agwo"),
+         col=c("navyblue","blue","green","cyan"),
+         lty=1, lwd=c(3,1,1,1), bty="n")
+  #cat('all plotted\n')
+  dev.off()
+  if (!plothrus)
+    break
+ } # end for iw
+}

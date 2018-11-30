@@ -1,0 +1,24 @@
+GC <- list()
+# set minimal required parameters
+GC$demf    <- topoFile(    file.path(dsnsim,'geoDEM.asc'),  minlevel=1, maxlevel=3)           # instance of topoFile
+GC$demf    <- topoFile(    file.path(dsnsim,'DEM.asc'), topotype=4,  minlevel=1, maxlevel=3)  # instance of topoFile for AAIGrid format
+GC$qinitf  <- qinitFile(4, file.path(dsnsim,'habsXYZ.asc'), minlevel=1, maxlevel=3)    # instance of qinitFile qinit=4 for absolute water surface input [DEM+h]
+GC$simtime      <- FF$inctime                                                          # integration time (time until next assimilation time)
+GC$output_times <- seq(0.0, GC$simtime, by=900)                                        # e.g. including overpass times
+GC$output_times[102] <- 90100 # to test irregular dt fixed_grid output
+GC$gauges   <- FF$gauges                                                               # instance of SpatialPointsDataFrame
+#GC$amr_levels_max <- as.integer()
+
+GC$rundata <- GCrundata(G,GC)                                                          # instance of GCData
+
+# set specific parameters
+GC$rundata@claw@bc_lower[2] <- as.integer(0)                                              # specific slope at the South boundary condition
+#GC$rundata@claw@bc_lower[2] <- as.integer(1)                                              # extrapolation at the South boundary condition
+#GC$rundata@claw@bc_lower[2] <- as.integer(3)                                              # solid wall at the South boundary condition
+GC$rundata@claw@bc_slope <- c(0.01,0.01,0.01,0.01)
+GC$rundata@claw@topoim   <- as.integer(0)
+#GC$rundata@fixed_grids@fixed_grids[[1]]@num_output <- as.integer(230)
+
+GC$rundata@geoclaw@dry_tolerance <- 1e-03
+GC$rundata@geoclaw@use_inflows   <- FALSE # just initial condition problem
+GC$rundata@geoclaw@use_inflows   <- TRUE  # initial condition + inflow problem

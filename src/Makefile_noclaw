@@ -1,0 +1,84 @@
+# Makefile for Clawpack code in this directory.
+# This version only sets the local files and frequently changed
+# options, and then includes the standard makefile pointed to by CLAWMAKE.
+CLAWMAKE = $(CLAW)/clawutil/src/Makefile.common
+
+# See the above file for details and a list of make options, or type
+#   make .help
+# at the unix prompt.
+
+
+# Adjust these variables if desired:
+# ----------------------------------
+
+EXE = hspf                      # Executable to create
+#CLAW_PKG = geoclaw             # Clawpack package to use
+OUTDIR  = output                # Directory for output
+PLOTDIR = plots                 # Directory for plots
+RESTART = False
+#SETRUN_FILE = setrun.py        # File containing function to make data
+#SETPLOT_FILE = setplot.py      # File containing function to set plots
+# SETRUN_FILE = setrun.R
+# SETPLOT_FILE = setplot.R
+#PREPROCESSOR = R               # Created by Javier: 'R' or 'python' to be used by Makefile.common to create the data processing for Geoclaw
+                               # unused by now
+
+# Environment variable FC should be set to fortran compiler, e.g. gfortran
+
+# Compiler flags can be specified here or set as an environment variable
+FFLAGS ?= -g -O
+# The following flag to the linker seems to solve an issue about x86_64 architecture on MAC laptop, which prevented correct linking
+LFLAGS = -lstdc++
+# ---------------------------------
+# List of sources for this program:
+# ---------------------------------
+HSPF = /Users/pt902904/Documents/hydrology/tophspf
+
+TOPLIB  = $(HSPF)/src
+AMRLIB  = $(CLAW)/amrclaw/src/2d
+GEOLIB  = $(CLAW)/geoclaw/src/2d/shallow
+
+
+
+# amr2_module.f90 is the dependent version of amr.f90
+
+MODULES = \
+ $(TOPLIB)/nrtype.F90 \
+ $(TOPLIB)/iso_varying_string.F90 \
+ $(TOPLIB)/Strings/stringmod_nr.F90 \
+ $(TOPLIB)/ModuleHspfPwater.F90
+
+# $(GEOLIB)/utility_module.f90 \
+# $(AMRLIB)/amr_module.f90 \
+# $(AMRLIB)/regions_module.f90 \
+# $(AMRLIB)/gauges_module.f90 \
+# $(GEOLIB)/geoclaw_module.f90 \
+# $(GEOLIB)/topo_module.f90 \
+# $(GEOLIB)/iso_varying_string.f90 \
+# $(GEOLIB)/ModuleFloodTools.f90 \
+# $(TOPHSPF)/tests/simple_surs/modulehspfpwater.F90 \
+# $(GEOLIB)/surs2qinit_module.f90 \
+# $(GEOLIB)/refinement_module.f90 \
+# $(GEOLIB)/fixedgrids_module.f90 \
+# $(GEOLIB)/fgmax_module.f90 \
+# $(GEOLIB)/amr2_module.f90 \
+
+
+# note: fgmax_interpolate0.f90 :: 0-order interpolation instead of bilinear
+# note: stepgrid_fgvar.f90     :: JGP time-varying fixed_grid output as opossed to stepgrid.f
+SOURCES = $(TOPLIB)/runhydro.F90
+
+#-------------------------------------------------------------------
+# Include Makefile containing standard definitions and make options:
+include $(CLAWMAKE)
+
+# Construct the topography data
+#.PHONY: topo all
+#topo:
+#	python maketopo.py
+
+#all:
+#	$(MAKE) topo
+#	$(MAKE) .plots
+#	$(MAKE) .htmls
+

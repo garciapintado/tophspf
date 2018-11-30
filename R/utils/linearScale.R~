@@ -1,0 +1,17 @@
+linearScale <- function(x, linmul, inverse=FALSE) {
+  # note: this function is limited to one global parameter per ensemble member.
+  # That is, spatial variations in the parameter are not allowed.
+  # This is so, so allow for time augmentation of the parameter in analysis()
+  
+  if (length(linmul) != 1 && length(linmul) != ncol(x))
+    stop('linearScale:: linmul length not exact divisor of x length')
+  if (length(linmul) == ncol(x))
+    linmul <- rep(linmul, each=nrow(x))          # expand
+  
+  if (!inverse) {         # forward
+    x <- x * linmul
+  } else {                # inverse
+    x <- x / linmul
+  }
+  return(x)
+}

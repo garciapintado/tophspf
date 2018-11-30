@@ -1,0 +1,12 @@
+ OUTWATCH                  Unknown Client            Do not have               From File                 outwatch.dat                                                 YES
+ OUTPUT_RESULT             Unknown Client            Do not have               From File                 output.dat                                                   YES
+ DT_LOG                    Unknown Client            Do not have               From File                 dt.log                                                       YES
+ IN_MODEL                  Unknown Client            Do not have               From File                 in_tophspf.dat                                               YES
+ IN_TIME                   Unknown Client            Do not have               From File                 in_time.dat                                                  YES
+ MODEL_NAME                HYDROLand                 HYDRO Land Model          From File                 HYDRO Land Model                                             YES
+ START                     Hydro Land                Do not have               From File                 2014.00000       9.00000000       12.0000000       22.000000 YES
+ END                       Hydro Land                Do not have               From File                 2014.00000       10.0000000       12.0000000       4.0000000 YES
+ DT                        Hydro Land                Do not have               From File                 60.0000000                                                   YES
+ VARIABLEDT                Hydro Land                FALSE                     From File                 FALSE                                                        YES
+ GMTREFERENCE              Hydro Land                0.00000000                From File                 0.00000000                                                   YES
+ DT_PREDICTION_INTERVAL    Hydro Land                60.0000000                From File                 60.0000000                                                   YES
